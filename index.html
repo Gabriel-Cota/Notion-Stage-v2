@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Internship Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DotGothic16&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --red: #f71e02;
+      --ink: #000;
+      --muted: #767676;
+      --border: #000;
+      --radius: 14px;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #fff;
+      color: var(--ink);
+      padding: 24px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Shared title/subtitle system */
+    .label {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 1.5px;
+      color: var(--muted); margin-bottom: 14px;
+    }
+    .headline { font-size: 28px; font-weight: 800; line-height: 1.15; color: var(--ink); }
+    .meta { font-size: 13px; color: var(--muted); font-weight: 500; margin-top: 4px; }
+    .strong-line {
+      font-size: 18px; font-weight: 800; color: var(--ink);
+      margin-top: 16px; padding-top: 12px; border-top: 1px dashed var(--border);
+    }
+    .dot-num { font-family: 'DotGothic16', ui-monospace, monospace; letter-spacing: 1px; }
+
+    .top { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+    .card { background: #fff; border: 1.5px solid var(--border); border-radius: var(--radius); padding: 20px 22px; }
+
+    .interview-empty { font-size: 14px; color: var(--muted); margin-top: 16px; }
+
+    .ring-card { display: flex; flex-direction: column; align-items: center; }
+    .ring-wrap { position: relative; width: 108px; height: 108px; }
+    .ring-center {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center; pointer-events: none;
+    }
+    .ring-num { font-size: 32px; font-weight: 400; line-height: 1; color: var(--ink); }
+    .ring-goal { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+    .legend { display: flex; flex-direction: column; gap: 10px; }
+    .legend-row { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+    .dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+    .lname { color: #444; flex: 1; font-weight: 500; }
+    .lval { font-weight: 700; color: var(--ink); }
+
+    .stat-total { display: flex; align-items: baseline; gap: 8px; }
+    .stat-total .dot-num { font-size: 34px; }
+
+    .chart-card { padding: 20px 22px 16px; }
+    .chart-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+    .chart-head .label { margin-bottom: 0; }
+    .range-picker { display: flex; gap: 6px; }
+    .range-btn {
+      font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; font-weight: 700;
+      color: var(--ink); background: #fff; border: 1.5px solid var(--border);
+      border-radius: 999px; padding: 6px 14px; cursor: pointer;
+    }
+    .range-btn.active { background: var(--red); border-color: var(--red); color: #fff; }
+    .chart-wrap { position: relative; height: 240px; margin-top: 12px; }
+
+    .updated { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; color: #bbb; text-align: right; margin-top: 12px; }
+    .loading { color: var(--muted); font-size: 13px; padding: 40px; text-align: center; }
+
+    @media (max-width: 640px) {
+      body { padding: 14px; }
+      .top { grid-template-columns: 1fr; gap: 10px; }
+      .card { padding: 18px; }
+      .headline { font-size: 24px; }
+      .strong-line { font-size: 17px; }
+      .chart-wrap { height: 260px; }
+    }
+  </style>
+</head>
+<body>
+
+  <div id="app" class="loading">Chargement…</div>
+
+  <script>
+    const RANGE_DAYS = { semaine: 7, mois: 30, tout: Infinity };
+    let state = { history: [], goal: 10, range: 'semaine', chart: null };
+
+    fetch('data.json?t=' + Date.now())
+      .then(r => r.json())
+      .then(d => render(d))
+      .catch(() => {
+        document.getElementById('app').textContent = 'Impossible de charger les données.';
+      });
+
+    function sliceHistory(history, range) {
+      const n = RANGE_DAYS[range];
+      return n === Infinity ? history : history.slice(-n);
+    }
+
+    function formatLabel(dateStr, range) {
+      const dt = new Date(dateStr + 'T00:00:00');
+      return range === 'semaine'
+        ? dt.toLocaleDateString('fr-FR', { weekday: 'short' })
+        : dt.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+    }
+
+    function mondayOf(d) {
+      const x = new Date(d);
+      x.setHours(0, 0, 0, 0);
+      x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+      return x;
+    }
+
+    function formatInterviewWhen(next) {
+      const dt = new Date(next.datetime);
+      const weekday = dt.toLocaleDateString('fr-FR', { weekday: 'long' });
+      const weekdayCap = weekday.charAt(0).toUpperCase() + weekday.slice(1);
+      const hh = String(dt.getHours()).padStart(2, '0');
+      const mm = String(dt.getMinutes()).padStart(2, '0');
+      const timeStr = mm === '00' ? `${hh}h` : `${hh}h${mm}`;
+
+      const thisMonday = mondayOf(new Date());
+      const nextMonday = new Date(thisMonday); nextMonday.setDate(thisMonday.getDate() + 7);
+      const weekAfter = new Date(thisMonday); weekAfter.setDate(thisMonday.getDate() + 14);
+
+      if (!next.has_time) {
+        if (dt < nextMonday) return weekdayCap;
+        if (dt < weekAfter) return `${weekdayCap} prochain`;
+        return `${weekdayCap} ${dt.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}`;
+      }
+      if (dt < nextMonday) return `${weekdayCap} ${timeStr}`;
+      if (dt < weekAfter) return `${weekdayCap} prochain à ${timeStr}`;
+      return `${weekdayCap} ${dt.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })} à ${timeStr}`;
+    }
+
+    function render(d) {
+      const goal = d.goal || 10;
+      const todayCount = d.today || 0;
+      const ringColor = todayCount >= goal ? '#0f7b6c' : todayCount >= goal / 2 ? '#dfab01' : '#f71e02';
+      const next = d.next_interview;
+
+      state.history = d.history || [];
+      state.goal = goal;
+
+      const STATUS_ORDER = [
+        ['Appliqué', '#d9730d'],
+        ['Entretien 1', '#dfab01'],
+        ['Entretien 2', '#0f7b6c'],
+        ['Entretien 3', '#ad1a72'],
+        ['Accepté', '#0b6e99'],
+        ['Refusé', '#e03e3e'],
+      ];
+      const statusRows = STATUS_ORDER
+        .filter(([name]) => (d.statuses[name] || 0) > 0)
+        .map(([name, color]) => `
+              <div class="legend-row">
+                <div class="dot" style="background:${color}"></div>
+                <span class="lname">${name}</span>
+                <span class="lval">${d.statuses[name]}</span>
+              </div>`)
+        .join('');
+
+      document.getElementById('app').innerHTML = `
+        <div class="top">
+          <div class="card">
+            <div class="label">🗓️ Prochain entretien</div>
+            ${next ? `
+              <div class="headline">${next.company || 'Entreprise'}</div>
+              <div class="meta">${next.title || ''}</div>
+              <div class="strong-line">${formatInterviewWhen(next)}${next.presentiel ? ' en ' + next.presentiel : ''}</div>
+            ` : `<div class="interview-empty">Aucun entretien prévu</div>`}
+          </div>
+
+          <div class="card ring-card">
+            <div class="label">Aujourd'hui</div>
+            <div class="ring-wrap">
+              <canvas id="todayChart"></canvas>
+              <div class="ring-center">
+                <div class="ring-num dot-num">${todayCount}</div>
+                <div class="ring-goal">/ ${goal}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="label">Statuts</div>
+            <div class="legend">${statusRows}</div>
+            <div class="strong-line stat-total">
+              <span class="dot-num">${d.total}</span>
+              <span class="meta" style="margin-top:0">candidatures au total</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card chart-card">
+          <div class="chart-head">
+            <div class="label">Candidatures par jour</div>
+            <div class="range-picker">
+              <button class="range-btn" data-range="semaine">Semaine</button>
+              <button class="range-btn" data-range="mois">1 mois</button>
+              <button class="range-btn" data-range="tout">Tout</button>
+            </div>
+          </div>
+          <div class="chart-wrap"><canvas id="lineChart"></canvas></div>
+        </div>
+
+        <div class="updated">Mis à jour le ${d.updated_at}</div>
+      `;
+
+      // Today ring
+      new Chart(document.getElementById('todayChart'), {
+        type: 'doughnut',
+        data: {
+          datasets: [{
+            data: [todayCount, Math.max(0, goal - todayCount)],
+            backgroundColor: [ringColor, '#eaeaea'],
+            borderWidth: 0,
+          }]
+        },
+        options: {
+          cutout: '78%',
+          plugins: { legend: { display: false }, tooltip: { enabled: false } }
+        }
+      });
+
+      document.querySelectorAll('.range-btn').forEach(btn => {
+        btn.addEventListener('click', () => setRange(btn.dataset.range));
+      });
+      setRange(state.range);
+    }
+
+    function setRange(range) {
+      state.range = range;
+      document.querySelectorAll('.range-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.range === range);
+      });
+
+      const slice = sliceHistory(state.history, range);
+      const labels = slice.map(pt => formatLabel(pt.date, range));
+      const values = slice.map(pt => pt.count);
+      const goal = state.goal;
+      const pointColors = values.map(v => v >= goal ? '#0f7b6c' : v >= goal / 2 ? '#dfab01' : '#f71e02');
+      const pointRadius = values.length > 14 ? 3 : 6;
+
+      if (state.chart) {
+        state.chart.data.labels = labels;
+        state.chart.data.datasets[0].data = values;
+        state.chart.data.datasets[0].pointBackgroundColor = pointColors;
+        state.chart.data.datasets[0].pointRadius = pointRadius;
+        state.chart.data.datasets[1].data = Array(values.length).fill(goal);
+        state.chart.options.scales.y.max = Math.max(goal + 3, Math.max(...values, 0) + 2);
+        state.chart.update();
+        return;
+      }
+
+      state.chart = new Chart(document.getElementById('lineChart'), {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: 'Candidatures',
+              data: values,
+              borderColor: '#000',
+              backgroundColor: 'rgba(0,0,0,0.04)',
+              fill: true,
+              tension: 0.4,
+              pointBackgroundColor: pointColors,
+              pointBorderColor: '#fff',
+              pointBorderWidth: 2,
+              pointRadius,
+            },
+            {
+              label: 'Objectif',
+              data: Array(values.length).fill(goal),
+              borderColor: '#ccc',
+              borderDash: [5, 4],
+              borderWidth: 1.5,
+              pointRadius: 0,
+              fill: false,
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: ctx => ctx.datasetIndex === 0
+                  ? ` ${ctx.raw} candidatures`
+                  : ` objectif (${goal})`
+              }
+            }
+          },
+          scales: {
+            y: {
+              min: 0, max: Math.max(goal + 3, Math.max(...values, 0) + 2),
+              ticks: { stepSize: 2, color: '#ccc', font: { size: 11, family: 'JetBrains Mono' } },
+              grid: { color: '#f2f2f2' },
+              border: { display: false }
+            },
+            x: {
+              ticks: { color: '#bbb', font: { size: 11, family: 'JetBrains Mono' }, autoSkip: true, maxRotation: 0 },
+              grid: { display: false },
+              border: { display: false }
+            }
+          }
+        }
+      });
+    }
+  </script>
+</body>
+</html>
